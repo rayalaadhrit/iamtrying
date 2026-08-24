@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Zombie Gold Rush</title>
+<style>
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: #101217; color: white; font-family: Arial, sans-serif; }
+    canvas { display: block; background: linear-gradient(#182018 1px, transparent 1px), linear-gradient(90deg, #182018 1px, transparent 1px); background-size: 40px 40px; }
+    #hud { position: fixed; top: 12px; left: 12px; z-index: 5; background: rgba(0,0,0,.72); padding: 12px 16px; border-radius: 12px; font-size: 17px; line-height: 1.7; min-width: 210px; }
+    #shop { display: none; position: fixed; z-index: 10; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 420px; background: #181b22; border: 3px solid #e5b93f; border-radius: 18px; padding: 25px; box-shadow: 0 0 50px black; }
+    #shop h1 { text-align: center; color: #ffd84d; margin-top: 0; }
+    .shopItem { background: #242832; padding: 13px; margin: 9px 0; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; }
+    button { border: none; border-radius: 8px; padding: 9px 13px; cursor: pointer; font-weight: bold; background: #e5b93f; }
+    button:hover { background: #ffe070; }
+    #instructions { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.65); padding: 9px 18px; border-radius: 10px; color: #ddd; }
+    #gameOver { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 20; justify-content: center; align-items: center; text-align: center; }
+    #gameOver div { background: #181b22; padding: 40px; border-radius: 20px; border: 2px solid #d44; }
+    #gameOver h1 { color: #ff5555; font-size: 45px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+    ❤️ HP: <span id="hp">100</span><br>
+    💰 Gold: <span id="gold">50</span><br>
+    🔫 Ammo: <span id="ammo">30</span><br>
+    🧟 Wave: <span id="wave">1</span><br>
+    ⭐ Score: <span id="score">0</span><br>
+    💎 Loot: <span id="loot">0</span>
+</div>
+<div id="instructions">
+    WASD / Arrow Keys = Move &nbsp; | &nbsp; Mouse = Aim &nbsp; | &nbsp; Click = Shoot &nbsp; | &nbsp; E = Shop
+</div>
+<div id="shop">
+    <h1>🏪 SURVIVOR SHOP</h1>
+    <p style="text-align:center">Gold: 💰 <span id="shopGold">0</span></p>
+    <div class="shopItem"><span>🔫 10 Ammo</span><button onclick="buyAmmo()">Buy — 15G</button></div>
+    <div class="shopItem"><span>❤️ Medkit (+30 HP)</span><button onclick="buyMedkit()">Buy — 20G</button></div>
+    <div class="shopItem"><span>⚡ Faster Gun</span><button onclick="buyFireRate()">Buy — 60G</button></div>
+    <div class="shopItem"><span>💥 Stronger Bullets</span><button onclick="buyDamage()">Buy — 80G</button></div>
+    <hr>
+    <div class="shopItem"><span>💎 Sell 5 Zombie Loot</span><button onclick="sellLoot()">Sell — 40G</button></div>
+    <button style="width:100%;margin-top:12px" onclick="closeShop()">EXIT SHOP</button>
+</div>
+<div id="gameOver">
+    <div>
+        <h1>YOU GOT OVERRUN!</h1>
+        <p>Final Score: <span id="finalScore">0</span></p>
+        <p>Gold Collected: 💰 <span id="finalGold">0</span></p>
+        <button onclick="location.reload()">PLAY AGAIN</button>
+    </div>
+</div>
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+window.addEventListener("resize", () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
+
+let player = { x: canvas.width / 2, y: canvas.height / 2, radius: 18, speed: 4, hp: 100, maxHp: 100, ammo: 30, gold: 50, loot: 0, damage: 25, fireDelay: 250, lastShot: 0 };
+let zombies = []; let bullets = []; let keys = {}; let mouse = { x: canvas.width / 2, y: canvas.height / 2, down: false };
+let wave = 1; let score = 0; let zombiesToSpawn = 5; let spawnedThisWave = 0; let gameRunning = true; let shopOpen = false;
+
+window.addEventListener("keydown", e => { keys[e.key.toLowerCase()] = true; if (e.key.toLowerCase() === "e") { if (shopOpen) closeShop(); else openShop(); } });
+window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+canvas.addEventListener("mousemove", e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+canvas.addEventListener("mousedown", () => { mouse.down = true; });
+window.addEventListener("mouseup", () => { mouse.down = false; });
+
+function updatePlayer() {
+    let dx = 0; let dy = 0;
+    if (keys["w"] || keys["arrowup"]) dy--; if (keys["s"] || keys["arrowdown"]) dy++;
+    if (keys["a"] || keys["arrowleft"]) dx--; if (keys["d"] || keys["arrowright"]) dx++;
+    if (dx !== 0 || dy !== 0) { let length = Math.sqrt(dx * dx + dy * dy); dx /= length; dy /= length; player.x += dx * player.speed; player.y += dy * player.speed; }
+    player.x = Math.max(20, Math.min(canvas.width - 20, player.x)); player.y = Math.max(20, Math.min(canvas.height - 20, player.y));
+}
+
+function shoot() {
+    if (player.ammo <= 0) return; let now = Date.now(); if (now - player.lastShot < player.fireDelay) return;
+    player.lastShot = now; player.ammo--;
+    let angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    bullets.push({ x: player.x, y: player.y, dx: Math.cos(angle) * 11, dy: Math.sin(angle) * 11, radius: 5, damage: player.damage });
+    updateHUD();
+}
+
+function updateBullets() {
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i]; b.x += b.dx; b.y += b.dy;
+        if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) { bullets.splice(i, 1); continue; }
+        for (let j = zombies.length - 1; j >= 0; j--) {
+            let z = zombies[j]; let dist = Math.hypot(b.x - z.x, b.y - z.y);
+            if (dist < b.radius + z.radius) {
+                z.hp -= b.damage; bullets.splice(i, 1);
+                if (z.hp <= 0) { zombies.splice(j, 1); score += 10; player.gold += 5; player.loot++; if (Math.random() < 0.15) player.gold += 10; updateHUD(); }
+                break;
+            }
+        }
+    }
+}
+
+function spawnZombie() {
+    let side = Math.floor(Math.random() * 4); let x, y;
+    if (side === 0) { x = -20; y = Math.random() * canvas.height; }
+    else if (side === 1) { x = canvas.width + 20; y = Math.random() * canvas.height; }
+    else if (side === 2) { x = Math.random() * canvas.width; y = -20; }
+    else { x = Math.random() * canvas.width; y = canvas.height + 20; }
+    let speed = 1 + Math.random() * 1.5 + (wave * 0.1);
+    let hp = 40 + (wave * 10);
+    zombies.push({ x: x, y: y, radius: 16, speed: speed, hp: hp, maxHp: hp }); spawnedThisWave++;
+}
+
+function updateZombies() {
+    if (spawnedThisWave < zombiesToSpawn && Math.random() < 0.02 && !shopOpen) { spawnZombie(); }
+    for (let i = zombies.length - 1; i >= 0; i--) {
+        let z = zombies[i]; let angle = Math.atan2(player.y - z.y, player.x - z.x);
+        z.x += Math.cos(angle) * z.speed; z.y += Math.sin(angle) * z.speed;
+        let dist = Math.hypot(player.x - z.x, player.y - z.y);
+        if (dist < player.radius + z.radius) { player.hp -= 0.5; updateHUD(); if (player.hp <= 0) endGame(); }
+    }
+    if (zombies.length === 0 && spawnedThisWave >= zombiesToSpawn && !shopOpen) { wave++; zombiesToSpawn += 3; spawnedThisWave = 0; updateHUD(); }
+}
+
+function updateHUD() {
+    document.getElementById("hp").innerText = Math.max(0, Math.floor(player.hp));
+    document.getElementById("gold").innerText = player.gold;
+    document.getElementById("ammo").innerText = player.ammo;
+    document.getElementById("wave").innerText = wave;
+    document.getElementById("score").innerText = score;
+    document.getElementById("loot").innerText = player.loot;
+}
+
+function openShop() { shopOpen = true; document.getElementById("shopGold").innerText = player.gold; document.getElementById("shop").style.display = "block"; }
+function closeShop() { shopOpen = false; document.getElementById("shop").style.display = "none"; }
+function buyAmmo() { if (player.gold >= 15) { player.gold -= 15; player.ammo += 10; updateHUD(); openShop(); } }
+function buyMedkit() { if (player.gold >= 20 && player.hp < player.maxHp) { player.gold -= 20; player.hp = Math.min(player.maxHp, player.hp + 30); updateHUD(); openShop(); } }
+function buyFireRate() { if (player.gold >= 60 && player.fireDelay > 100) { player.gold -= 60; player.fireDelay -= 40; updateHUD(); openShop(); } }
+function buyDamage() { if (player.gold >= 80) { player.gold -= 80; player.damage += 15; updateHUD(); openShop(); } }
+function sellLoot() { if (player.loot >= 5) { player.loot -= 5; player.gold += 40; updateHUD(); openShop(); } }
+
+function endGame() { gameRunning = false; document.getElementById("gameOver").style.display = "flex"; document.getElementById("finalScore").innerText = score; document.getElementById("finalGold").innerText = player.gold; }
+
+function loop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (gameRunning) {
+        if (!shopOpen) { updatePlayer(); if (mouse.down) shoot(); updateBullets(); updateZombies(); }
+        ctx.fillStyle = "#4ade80"; ctx.beginPath(); ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2); ctx.fill();
+        let headAngle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+        ctx.strokeStyle = "#155e75"; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(player.x + Math.cos(headAngle) * 22, player.y + Math.sin(headAngle) * 22); ctx.stroke();
+        ctx.fillStyle = "#ef4444";
+        for (let z of zombies) {
+            ctx.beginPath(); ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = "black"; ctx.fillRect(z.x - 15, z.y - 24, 30, 4);
+            ctx.fillStyle = "green"; ctx.fillRect(z.x - 15, z.y - 24, (z.hp / z.maxHp) * 30, 4); ctx.fillStyle = "#ef4444";
+        }
+        ctx.fillStyle = "#fde047"; for (let b of bullets) { ctx.define = function() {}; ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill(); }
+    }
